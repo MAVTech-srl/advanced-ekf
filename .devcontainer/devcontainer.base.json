@@ -1,0 +1,45 @@
+{
+	"name": "slam_fast_lio",
+	"build":{
+        "dockerfile": "../Dockerfile",
+        "args" : {},
+        "options": ["--progress=plain"]
+    },
+
+	"containerEnv": {
+        "DISPLAY": "unix:0",
+        "ROS_DOMAIN_ID": "0",
+        "SHELL": "/bin/bash"
+    },
+	"runArgs": [
+        "--network=host",
+        "--pid=host",
+        "--ipc=host",
+        "-e", "DISPLAY=${env:DISPLAY}",
+        "--privileged",
+        "--runtime=nvidia",
+        "--cap-add=SYS_PTRACE",
+        "--security-opt", "seccomp=unconfined",
+        "--group-add=video" 
+    ],
+    "mounts": [
+       "source=/tmp/.X11-unix,target=/tmp/.X11-unix,type=bind,consistency=cached",
+       "source=/dev,target=/dev,type=bind,consistency=cached"
+    ],
+
+	"postCreateCommand": "bash /ros_entrypoint.sh",
+
+	"customizations": {
+        "vscode": {
+            "extensions": [
+                "ms-vscode.cpptools-extension-pack@prerelease",
+                "eamodio.gitlens",
+                "ms-python.python",
+                "ms-python.vscode-pylance",
+                "ms-iot.vscode-ros@prerelease"
+            ]
+        }
+    },
+
+	"remoteUser": "rosdev"
+}

@@ -1,0 +1,9 @@
+[submodule "src/px4_ros_com"]
+	path = src/px4_ros_com
+	url = https://github.com/PX4/px4_ros_com.git
+[submodule "src/px4_msgs"]
+	path = src/px4_msgs
+	url = https://github.com/PX4/px4_msgs.git
+[submodule "src/advanced-ekf/include/IKFoM"]
+	path = src/advanced-ekf/include/IKFoM
+	url = git@github.com:MAVTech-srl/IKFoM.git

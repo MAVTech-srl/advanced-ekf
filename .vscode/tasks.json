@@ -1,0 +1,95 @@
+{
+    // See https://go.microsoft.com/fwlink/?LinkId=733558
+    // for the documentation about the tasks.json format
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "colcon_debug",
+            "type": "shell",
+            "detail": "Builds the whole workspace in DEBUG",
+            "command": "source /opt/ros/humble/install/setup.bash && colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && source install/local_setup.bash"
+        },
+        {
+            "label": "colcon_release",
+            "type": "shell",
+            "detail": "Builds the whole workspace in RELEASE",
+            "command": "source /opt/ros/humble/install/setup.bash && colcon build --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && source install/local_setup.bash"
+        },
+        {
+            "label": "colcon_advanced_ekf_release",
+            "type": "shell",
+            "detail": "Only builds advanced EKF package in RELEASE",
+            "command": "source /opt/ros/humble/install/setup.bash && colcon build --packages-select advanced-ekf  --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Release -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && source install/local_setup.bash"
+        },
+        {
+            "label": "colcon_advanced_ekf_debug",
+            "type": "shell",
+            "detail": "Only builds advanced EKF package in RELEASE",
+            "command": "source /opt/ros/humble/install/setup.bash && colcon build --packages-select advanced-ekf  --event-handlers console_direct+ --cmake-args -DCMAKE_BUILD_TYPE=Debug -DCMAKE_EXPORT_COMPILE_COMMANDS=ON && source install/local_setup.bash"
+        },
+        {
+            "label": "ROS2 node pre-debug MID360",
+            "detail": "Run this task BEFORE launching a debug session with 'Launch single ROS2 node' for Livox MID360",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "bash ${workspaceFolder}/.vscode/ROS2_node_pre_debug_mid360.sh"
+        },
+        {
+            "label": "ROS2 node pre-debug AVIA",
+            "detail": "Run this task BEFORE launching a debug session with 'Launch single ROS2 node' for Livox AVIA",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "bash ${workspaceFolder}/.vscode/ROS2_node_pre_debug_avia.sh"
+        },
+        {
+            "label": "ROS2 node pre-debug advanced_odometry",
+            "detail": "Run this task BEFORE launching a debug session with 'Launch single ROS2 node' for advanced_odometry node",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "bash ${workspaceFolder}/.vscode/ROS2_node_pre_debug_ekf.sh"
+        },
+        {
+            "label": "ROS2 node valgrind AVIA",
+            "detail": "Run this task BEFORE launching a debug session with 'Launch single ROS2 node' for Livox AVIA",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "bash ${workspaceFolder}/.vscode/ROS2_node_valgrind_avia.sh"
+        },
+        {
+            "label": "ROS2 node valgrind EKF",
+            "detail": "Launch Valgrind for advanced_odometry node",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "bash ${workspaceFolder}/.vscode/ROS2_node_valgrind_ekf.sh"
+        },
+        {
+            "label": "Customize devcontainer.json",
+            "detail": "Customize the devcontainer.json file for the current host capabilities.",
+            "type": "shell",
+            // "options": {
+            //     "cwd": "${workspaceFolder}"
+            // },
+            "command": "bash ${workspaceFolder}/.devcontainer/setup_devcontainer.sh"
+        },
+        {
+            "label": "Open in suitable devcontainer",
+            "detail": "Run this task instead of reopening the devontainer through vscode. This task checks host capabilities and selects the appropriate Dockerfile.",
+            "type": "shell",
+            "options": {
+                "cwd": "${workspaceFolder}"
+            },
+            "command": "${command:remote-containers.rebuildAndReopenInContainer}",
+            "dependsOn": ["Customize devcontainer.json"]
+        }
+    ]
+}
