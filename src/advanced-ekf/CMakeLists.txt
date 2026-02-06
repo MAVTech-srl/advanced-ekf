@@ -38,6 +38,8 @@ find_package(nav_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(px4_msgs REQUIRED)
+find_package(px4_ros_com REQUIRED)
+find_package(tf2_ros REQUIRED)
 
 # uncomment the following section in order to fill in
 # further dependencies manually.
@@ -53,11 +55,23 @@ include_directories(include/advanced-ekf)
 include_directories(include/IKFoM/IKFoM_toolkit)
 
 add_executable(advanced_odometry src/advanced_odometry.cpp src/ekf.cpp)
+ament_target_dependencies(
+    advanced_odometry
+    geometry_msgs
+    rclcpp
+    rclcpp_components
+    nav_msgs
+    sensor_msgs
+    px4_msgs
+    px4_ros_com
+    tf2
+    tf2_ros
+)
 target_include_directories(advanced_odometry PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include>)
 target_compile_features(advanced_odometry PUBLIC c_std_99 cxx_std_17)  # Require C99 and C++17
-ament_target_dependencies(advanced_odometry rclcpp sensor_msgs nav_msgs geometry_msgs px4_msgs)
+ament_target_dependencies(advanced_odometry rclcpp sensor_msgs nav_msgs geometry_msgs px4_msgs px4_ros_com)
 target_link_libraries(advanced_odometry ${EIGEN_LIBRARIES})
 
 install(TARGETS advanced_odometry

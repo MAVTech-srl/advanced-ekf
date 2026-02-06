@@ -6,8 +6,8 @@
         log_filepath: "./"
 
         ekf:
-          frequency: 10.0
+          frequency: 50.0
           acc_noise_covariance: 0.00001
           gyr_noise_covariance: 0.00001
-          jitter_noise_covariance: 0.0001
+          aero_noise_covariance: 0.000001
           extrinsic_estim_enable: false

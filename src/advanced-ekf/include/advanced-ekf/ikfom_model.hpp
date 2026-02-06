@@ -6,10 +6,14 @@ typedef MTK::vect<3, double> vect3;
 typedef MTK::SO3<double> SO3;
 typedef MTK::S2<double, 98090, 10000, 1> S2; 
 
-double mass 				= 2.0;																	// UAV mass in kilos
-Eigen::Matrix3d inv_inertia = Eigen::Vector3d(1 / 0.021667, 1 / 0.021667, 1 / 0.04).asDiagonal();	// Inverse of inertia matrix
-double arm_dist_x 			= 0.174;																// Rotor distance from center of UAV in meters (along x axis)
-double arm_dist_y 			= 0.174;																// Rotor distance from center of UAV in meters (along y axis)
+namespace UAVmodel
+{
+	const double mass 				= 2.0;																		// UAV mass in kilos
+	const Eigen::Matrix3d inv_inertia = Eigen::Vector3d(1 / 0.021667, 1 / 0.021667, 1 / 0.04).asDiagonal();		// Inverse of inertia matrix
+	const double arm_dist_x 			= 0.174;																// Rotor distance from center of UAV in meters (along x axis)
+	const double arm_dist_y 			= 0.174;																// Rotor distance from center of UAV in meters (along y axis)
+	const int PROCESS_NOISE_SIZE		= 9;
+}
 
 template<typename T>
 inline Eigen::Matrix<T, 3, 3> skew_symm(Eigen::Vector<T, 3> in)
@@ -40,8 +44,6 @@ MTK_BUILD_MANIFOLD(state_ikfom,
 ((S2, grav))
 ((SO3, rot_gps_imu))
 ((vect3, pos_gps_imu))
-((vect3, acc))
-((vect3, jitter))
 ((vect3, omega))
 );
 
@@ -53,7 +55,7 @@ MTK_BUILD_MANIFOLD(input_ikfom,
 MTK_BUILD_MANIFOLD(process_noise_ikfom,
 ((vect3, nbg))
 ((vect3, nba))
-((vect3, nj))       // Random walk for the jitter
+((vect3, na_disturb))			// Disturbance noise taking care of aerodynamic and wind effects
 );
 
 MTK::get_cov<process_noise_ikfom>::type process_noise_cov()
@@ -61,30 +63,28 @@ MTK::get_cov<process_noise_ikfom>::type process_noise_cov()
 	MTK::get_cov<process_noise_ikfom>::type cov = MTK::get_cov<process_noise_ikfom>::type::Zero();
 	MTK::setDiagonal<process_noise_ikfom, vect3, 0>(cov, &process_noise_ikfom::nbg, 0.00001); // *dt 0.00001 0.00001 * dt *dt 0.3 //0.001 0.0001 0.01
 	MTK::setDiagonal<process_noise_ikfom, vect3, 3>(cov, &process_noise_ikfom::nba, 0.00001);   //0.001 0.05 0.0001/out 0.01
-	MTK::setDiagonal<process_noise_ikfom, vect3, 6>(cov, &process_noise_ikfom::nj, 0.00001);   //0.001 0.05 0.0001/out 0.01
+	MTK::setDiagonal<process_noise_ikfom, vect3, 6>(cov, &process_noise_ikfom::na_disturb, 0.001);   //0.001 0.05 0.0001/out 0.01
 	return cov;
 }
 
-Eigen::Matrix<double, 39, 1> f(state_ikfom &state, const input_ikfom &input)
-{
-	Eigen::VectorXd out = Eigen::Matrix<double, 39, 1>::Zero();
-	out.head(3) 	   = state.vel;
-	out.segment(3, 3)  = state.omega;
-	out.segment(6, 3)  = Eigen::Vector3d::Zero();
-	out.segment(9, 3)  = Eigen::Vector3d::Zero();
-	out.segment(12, 3) = state.grav.get_vect() + state.rot.toRotationMatrix() * input.force / mass;
-	out.segment(15, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nbg)
-	out.segment(18, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nba)
-	out.segment(21, 3) = Eigen::Vector3d::Zero();		// Gravity
-	out.segment(24, 3) = Eigen::Vector3d::Zero();		// R_odom_imu
-	out.segment(27, 3) = Eigen::Vector3d::Zero();		// p_odom_imu
-	out.segment(30, 3) = state.jitter;
-	out.segment(33, 3) = Eigen::Vector3d::Zero();		// Jitter, random walk
-	out.segment(36, 3) = -inv_inertia * ( skew_symm(state.omega) * inv_inertia * state.omega ) + inv_inertia * input.torque;
-	return out;
-}
+// Eigen::Matrix<double, 33, 1> f(state_ikfom &state, const input_ikfom &input)
+// {
+// 	Eigen::VectorXd out = Eigen::Matrix<double, 33, 1>::Zero();
+// 	out.head(3) 	   = state.vel;
+// 	out.segment(3, 3)  = state.omega;
+// 	out.segment(6, 3)  = Eigen::Vector3d::Zero();
+// 	out.segment(9, 3)  = Eigen::Vector3d::Zero();
+// 	out.segment(12, 3) = /*state.grav.get_vect() + */state.rot.toRotationMatrix() * input.force / UAVmodel::mass;
+// 	out.segment(15, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nbg)
+// 	out.segment(18, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nba)
+// 	out.segment(21, 3) = Eigen::Vector3d::Zero();		// Gravity
+// 	out.segment(24, 3) = Eigen::Vector3d::Zero();		// R_odom_imu
+// 	out.segment(27, 3) = Eigen::Vector3d::Zero();		// p_odom_imu
+// 	out.segment(30, 3) = -UAVmodel::inv_inertia * ( skew_symm(state.omega) * UAVmodel::inv_inertia * state.omega ) + UAVmodel::inv_inertia * input.torque;
+// 	return out;
+// }
 
-Eigen::Matrix<double, 39, 38> df_dx(state_ikfom &state, const input_ikfom &input)
+Eigen::Matrix<double, 33, 32> df_dx(state_ikfom &state, const input_ikfom &input)
 {
 	// Eigen::Matrix<double, 30, 29> cov = Eigen::Matrix<double, 30, 29>::Zero();
 	// cov.template block<3, 3>(0, 12) = Eigen::Matrix3d::Identity();
@@ -99,26 +99,26 @@ Eigen::Matrix<double, 39, 38> df_dx(state_ikfom &state, const input_ikfom &input
 	// s.S2_Mx(grav_matrix, vec, 21);
 	// cov.template block<3, 2>(12, 21) =  grav_matrix; 
 	// return cov;
-	Eigen::MatrixXd out(39, 38);
+	Eigen::MatrixXd out(33, 32);
 	out.setZero();
-	out.block<3, 3>(12, 3) << -state.rot.toRotationMatrix() * skew_symm(input.force) / mass;
-	Eigen::Matrix<double, 3, 2> grav_matrix;
-	Eigen::Matrix<double, 2, 1> vec = Eigen::Matrix<double, 2, 1>::Zero();
-	state.S2_Mx(grav_matrix, vec, 21/* state index (apparently) */);
-	out.block<3, 2>(12, 21) << grav_matrix;
-	out.block<3, 3>(33, 32) << Eigen::Matrix3d::Identity();
+	out.block<3, 3>(12, 3) << -state.rot.toRotationMatrix() * skew_symm(input.force) / UAVmodel::mass;
+	// Eigen::Matrix<double, 3, 2> grav_matrix;
+	// Eigen::Matrix<double, 2, 1> vec = Eigen::Matrix<double, 2, 1>::Zero();
+	// state.S2_Mx(grav_matrix, vec, 21/* state index (apparently) */);
+	// out.block<3, 2>(12, 21) << grav_matrix;
 	for (int ii = 0; ii < 3; ii++)
 	{
-		Eigen::Vector3d de_delta_omega_de_axis;
+		Eigen::Vector3d de_delta_omega_de_axis = Eigen::Vector3d::Zero();
 		de_delta_omega_de_axis(ii) = 1.0;
-		out.block<3, 1>(36, 35 + ii) << -inv_inertia * 
-				( skew_symm(de_delta_omega_de_axis) * inv_inertia * state.omega + skew_symm(state.omega) * inv_inertia * de_delta_omega_de_axis );
+		out.block<3, 1>(30, 29 + ii) << -UAVmodel::inv_inertia * 
+				( skew_symm(de_delta_omega_de_axis) * UAVmodel::inv_inertia * state.omega + skew_symm(state.omega) * UAVmodel::inv_inertia * de_delta_omega_de_axis ) +
+				UAVmodel::inv_inertia * input.torque;
 	}
 	return out;
 }
 
 
-Eigen::Matrix<double, 39, 9> df_dw(state_ikfom &s, const input_ikfom &in)
+Eigen::Matrix<double, 33, 9> df_dw(state_ikfom &s, const input_ikfom &in)
 {
 	// Eigen::Matrix<double, 30, 12> cov = Eigen::Matrix<double, 30, 12>::Zero();
 	// cov.template block<3, 3>(12, 3) = -s.rot.toRotationMatrix();
@@ -128,10 +128,10 @@ Eigen::Matrix<double, 39, 9> df_dw(state_ikfom &s, const input_ikfom &in)
 	// cov.template bottomRightCorner(3, 3) = Eigen::Matrix3d::Identity();
 	// return cov;
 	Eigen::MatrixXd out;
-	out.resize(39, 9);
+	out.resize(33, 9);
 	out.setZero();
 	out.block<3, 3>(18, 0) << Eigen::Matrix3d::Identity();
 	out.block<3, 3>(15, 3) << Eigen::Matrix3d::Identity();
-	out.block<3, 3>(33, 6) << Eigen::Matrix3d::Identity();
+	out.block<3, 3>(12, 6) << Eigen::Matrix3d::Identity();
 	return out;
 }

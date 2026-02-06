@@ -111,16 +111,21 @@ app = Dash(__name__)
 app.layout = html.Div([
     html.H2("Grouped CSV Visualizer"),
     # ---------- File selector ----------
-    dcc.Dropdown(
-        id="file-selector",
-        options=[
-            {"label": os.path.basename(p), "value": p}
-            for p in list_csv_files()
-        ],
-        value=DEFAULT_FILE, #or (list_csv_files()[0] if list_csv_files() else None),
-        placeholder="Select a CSV file",
-        clearable=False,
-    ),
+    html.Div([
+        dcc.Dropdown(
+            id="file-selector",
+            options=[
+                {"label": os.path.basename(p), "value": p}
+                for p in list_csv_files()
+            ],
+            value=DEFAULT_FILE, #or (list_csv_files()[0] if list_csv_files() else None),
+            placeholder="Select a CSV file",
+            clearable=False,
+            style={"flex": "1"},
+        ),
+        html.Button("Refresh list", id="refresh-button", n_clicks=0,
+                    style={"margin-left": "10px"}),
+    ], style={"display": "flex", "align-items": "center"}),
     # ---------- Hidden stores ----------
     dcc.Store(id="dataframe-store", data={}),
     dcc.Store(id="groups-store", data={}),
@@ -129,6 +134,24 @@ app.layout = html.Div([
     # ---------- Container for dropdown + graph of the active tab ----------
     html.Div(id="tab-content")
 ])
+
+# ----------------------------------------------------------------------
+# 1️⃣ Refresh button – rebuild the file‑selector options
+# ----------------------------------------------------------------------
+@app.callback(
+    Output("file-selector", "options"),
+    Output("file-selector", "value"),
+    Input("refresh-button", "n_clicks"),
+    State("file-selector", "value"),
+)
+def refresh_file_list(_n_clicks, current_value):
+    """Return a fresh list of CSV files. Keep the current selection if it still exists."""
+    files = list_csv_files()
+    options = [{"label": os.path.basename(p), "value": p} for p in files]
+
+    # If the previously selected file is still present, keep it; otherwise pick the first one.
+    new_value = current_value # if current_value in files else (files[0] if files else None)
+    return options, new_value
 
 # ----------------------------------------------------------------------
 # 1️⃣ When a file is chosen: load data, filter groups, fill the tabs
@@ -183,6 +206,7 @@ def render_group_tab(selected_group, groups):
             options=[{"label": c, "value": c} for c in cols],
             value=(cols[:4] if selected_group == "Orientation (Quaternion)" else cols[:3]),
             multi=True,
+            closeOnSelect=False,      # keep the menu open after each click
             placeholder="Select column(s) to plot",
         ),
         dcc.Graph(
