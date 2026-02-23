@@ -30,7 +30,8 @@ IOFormat CommaInitFormatBase(StreamPrecision, DontAlignCols, ", ", ", ", "", "",
 Measurements measurement;
 input_ikfom current_input;
 bool extrinsic_estim_enable;
-bool UAV_landed;
+bool UAV_landed = true;
+bool UAV_flying = false;
 // Defining this function outside of the main class due to esekfom complaining about the function type...
 Eigen::Matrix<double, Eigen::Dynamic, 1> measurement_model(state_ikfom &state, esekfom::dyn_share_datastruct<double> &dyn_share_data)
 {
@@ -40,9 +41,31 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> measurement_model(state_ikfom &state, e
   dyn_share_data.h.segment(3, 3) = state.rot_gps_imu * state.vel;
   Eigen::Matrix3d gps_rot = state.rot_gps_imu.toRotationMatrix() * state.rot.toRotationMatrix();
   dyn_share_data.h.segment(6, 3) = Eigen::Quaterniond(gps_rot).normalized().vec();
-  dyn_share_data.h.segment(9, 3) = 1 / UAVmodel::mass * current_input.force + 
-          state.rot.toRotationMatrix().transpose() * (state.grav.get_vect() /* + a_disturb = zeros because is absorbed into the process noise*/) + 
+  // If the UAV is touching the ground, I need to simulate the reaction of the ground itself that keeps the UAV still
+  double total_force_on_ground = current_input.force(2) - UAVmodel::mass * 9.81;
+  if (total_force_on_ground <= 0.0 && !UAV_flying)
+  {
+    // std::cout << "[ h ] Ground and low force" << std::endl;
+    dyn_share_data.h.segment(9, 3) = state.rot.toRotationMatrix().transpose() * (state.grav.get_vect() /* + a_disturb = zeros because is absorbed into the process noise*/) + 
           state.ba;
+  }
+  // else if (UAV_landed && total_force_on_ground > 0.0)
+  // {
+  //   // std::cout << "[ h ] Ground but moving" << std::endl;
+  //   dyn_share_data.h.segment(9, 3) = 1 / UAVmodel::mass * current_input.force + 
+  //         state.rot.toRotationMatrix().transpose() * (state.grav.get_vect() /* + a_disturb = zeros because is absorbed into the process noise*/) + 
+  //         state.ba;
+  // }
+  else
+  {
+    // std::cout << "[ h ] Moving" << std::endl;
+    Vector3d actual_accel = Vector3d::Zero();
+    actual_accel(2) = 1 / UAVmodel::mass * current_input.force(2) - state.rot.toRotationMatrix().transpose()(2,2) * 9.81;
+    if (actual_accel(2) < 0.0) actual_accel(2) = 0.0;
+    dyn_share_data.h.segment(9, 3) = actual_accel + 
+            state.rot.toRotationMatrix().transpose() * (state.grav.get_vect() /* + a_disturb = zeros because is absorbed into the process noise*/) + 
+            state.ba;
+  }
   dyn_share_data.h.segment(12, 3) = state.omega + state.bg;
 
   dyn_share_data.z.resize(15);
@@ -62,11 +85,11 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> measurement_model(state_ikfom &state, e
   dyn_share_data.R.block<3, 3>(12, 12) = measurement.imu_gyr_cov;
 
   // h_x
-  dyn_share_data.h_x.resize(15, 32);
+  dyn_share_data.h_x.resize(15, 35);
   dyn_share_data.h_x.setZero();
   dyn_share_data.h_x.topLeftCorner(3, 3) << state.rot_gps_imu.toRotationMatrix();                             // wrt pos
   dyn_share_data.h_x.block<3, 3>(6, 3) << state.rot_gps_imu.toRotationMatrix();                               // wrt rot
-  dyn_share_data.h_x.block<3, 3>(9, 3) << state.rot.toRotationMatrix().transpose() * 
+  dyn_share_data.h_x.block<3, 3>(9, 3) << -state.rot.toRotationMatrix().transpose() * 
                           skew_symm(state.grav.get_vect() /* + a_disturb zeros */);                           // wrt rot
   // dyn_share_data.h_x.block<3, 3>(9, 3) << Matrix3d::Identity();
   dyn_share_data.h_x.block<3, 3>(3, 12) << state.rot_gps_imu.toRotationMatrix();                              // wrt vel
@@ -79,8 +102,8 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> measurement_model(state_ikfom &state, e
   if (extrinsic_estim_enable)
   {
     dyn_share_data.h_x.block<3, 3>(0, 23) << -state.rot_gps_imu.toRotationMatrix() * skew_symm(state.pos);    // wrt rot_gps_imu
-    dyn_share_data.h_x.block<3, 3>(3, 23) << state.rot.toRotationMatrix();                                    // wrt rot_gps_imu
-    dyn_share_data.h_x.block<3, 3>(6, 23) << -state.rot.toRotationMatrix() * skew_symm(state.vel);            // wrt rot_gps_imu
+    dyn_share_data.h_x.block<3, 3>(6, 23) << state.rot.toRotationMatrix();                                    // wrt rot_gps_imu
+    dyn_share_data.h_x.block<3, 3>(3, 23) << -state.rot.toRotationMatrix() * skew_symm(state.vel);            // wrt rot_gps_imu
     dyn_share_data.h_x.block<3, 3>(0, 26) << Matrix3d::Identity();                                            // wrt pos_gps_imu
   }
   dyn_share_data.h_x.block<3, 3>(12, 29) << Matrix3d::Identity();                                             // wrt omega
@@ -88,28 +111,40 @@ Eigen::Matrix<double, Eigen::Dynamic, 1> measurement_model(state_ikfom &state, e
   return dyn_share_data.h;
 }
 
-Eigen::Matrix<double, 33, 1> f(state_ikfom &state, const input_ikfom &input)
+Eigen::Matrix<double, 36, 1> f(state_ikfom &state, const input_ikfom &input)
 {
-	Eigen::VectorXd out = Eigen::Matrix<double, 33, 1>::Zero();
+	Eigen::VectorXd out = Eigen::Matrix<double, 36, 1>::Zero();
 	out.head(3) 	   = state.vel;
 	out.segment(3, 3)  = state.omega;
 	out.segment(6, 3)  = Eigen::Vector3d::Zero();
 	out.segment(9, 3)  = Eigen::Vector3d::Zero();
   // If the UAV is touching the ground, I need to simulate the reaction of the ground itself that keeps the UAV still
-  if (UAV_landed)
+  double total_force_on_ground = input.force(2) - UAVmodel::mass * 9.81;
+  if (total_force_on_ground <= 0.0 && !UAV_flying)
   {
-	  out.segment(12, 3) = /*state.grav.get_vect() + */state.rot.toRotationMatrix() * input.force / UAVmodel::mass;
+    std::cout << "[ f ] Ground and low force (" << total_force_on_ground << " N)" << std::endl;
+	  out.segment(12, 3) = /*state.grav.get_vect() + */state.rot.toRotationMatrix() * input.force / UAVmodel::mass * 0.0;
+    out.segment(30, 3) = Vector3d::Zero();
   }
+  // else if (total_force_on_ground > 0.0)
+  // {
+  //   std::cout << "[ f ] Ground but moving (" << total_force_on_ground << " N)" << std::endl;
+  //   out.segment(12, 3) = state.rot.toRotationMatrix() * input.force / UAVmodel::mass - state.grav.get_vect();
+  // }
   else
   {
-    out.segment(12, 3) = /*state.grav.get_vect() + */state.rot.toRotationMatrix() * input.force / UAVmodel::mass - state.grav.get_vect();
+    std::cout << "[ f ] Moving (" << total_force_on_ground << " N)" << std::endl;
+    Vector3d actual_accel = Vector3d::Zero();
+    actual_accel(2) = 1 / UAVmodel::mass * input.force(2);// - state.rot.toRotationMatrix().transpose()(2,2) * 9.81;
+    out.segment(12, 3) = /*state.grav.get_vect() + */state.rot.toRotationMatrix() * actual_accel - state.grav.get_vect();
+    out.segment(30, 3) = -UAVmodel::inv_inertia * ( skew_symm(state.omega) * UAVmodel::inv_inertia * state.omega ) + UAVmodel::inv_inertia * (input.torque + state.btau);
   }
 	out.segment(15, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nbg)
 	out.segment(18, 3) = Eigen::Vector3d::Zero();		// No state contribution, only noise contribution (i.e. nba)
 	out.segment(21, 3) = Eigen::Vector3d::Zero();		// Gravity
 	out.segment(24, 3) = Eigen::Vector3d::Zero();		// R_odom_imu
 	out.segment(27, 3) = Eigen::Vector3d::Zero();		// p_odom_imu
-	out.segment(30, 3) = -UAVmodel::inv_inertia * ( skew_symm(state.omega) * UAVmodel::inv_inertia * state.omega ) + UAVmodel::inv_inertia * input.torque;
+	// out.segment(30, 3) = -UAVmodel::inv_inertia * ( skew_symm(state.omega) * UAVmodel::inv_inertia * state.omega ) + UAVmodel::inv_inertia * input.torque;
 	return out;
 }
 
@@ -122,6 +157,9 @@ public:
     RCLCPP_DEBUG_STREAM(node_logger,"Getting parameters...");
     this->declare_parameter<double>("ekf.frequency");
     this->get_parameter_or<double>("ekf.frequency", EKF_frequency, 10.0);
+
+    this->declare_parameter<int>("ekf.max_iterations");
+    this->get_parameter_or<int>("ekf.max_iterations", max_iterations, 3);
 
     this->declare_parameter<double>("ekf.acc_noise_covariance");
     this->get_parameter_or<double>("ekf.acc_noise_covariance", acc_noise_cov, 0.001);
@@ -162,7 +200,7 @@ public:
     tf_broadcaster_ = std::make_unique<tf2_ros::TransformBroadcaster>(*this);
 
     VectorXd epsi = 0.001 * VectorXd::Ones(current_state.DIM);
-    ikfom.init_dyn_share(f, df_dx, df_dw, measurement_model, 3, epsi.data());
+    ikfom.init_dyn_share(f, df_dx, df_dw, measurement_model, max_iterations, epsi.data());
     IMU_init();
 
     auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1.0e3 / EKF_frequency));
@@ -173,9 +211,11 @@ public:
       RCLCPP_INFO_STREAM(node_logger, "Opening log file at " << log_filepath);
       log_file.open(log_filepath);
       log_file << "timestamp_s, elapsed_one_step_ms, pos_x, pos_y, pos_z, rot_x, rot_y, rot_z, rot_w, rot_I_L_x, rot_I_L_y, rot_I_L_z, rot_I_L_w, \
-pos_I_L_x, pos_I_L_y, pos_I_L_z, vel_x, vel_y, vel_z, bw_x, bw_y, bw_z, ba_x, ba_y, ba_z, g_x, g_y, g_z, \
+pos_I_L_x, pos_I_L_y, pos_I_L_z, vel_x, vel_y, vel_z, bw_x, bw_y, bw_z, ba_x, ba_y, ba_z, btau_x, btau_y, btau_z, g_x, g_y, g_z, \
 rot_O_I_x, rot_O_I_y, rot_O_I_z, rot_O_I_w, pos_O_I_x, pos_O_I_y, pos_O_I_z, \
-omega_x, omega_y, omega_z, force_x, force_y, force_z, torque_x, torque_y, torque_z" << std::endl;
+omega_x, omega_y, omega_z, force_x, force_y, force_z, torque_x, torque_y, torque_z, \
+px4_position_x, px4_position_y, px4_position_z, px4_velocity_x, px4_velocity_y, px4_velocity_z, px4_orientation_x, px4_orientation_y, px4_orientation_z, px4_orientation_w, \
+imu_acc_x, imu_acc_y, imu_acc_z, imu_omega_x, imu_omega_y, imu_omega_z" << std::endl;
       log_file.flush();
       // log_file << std::unitbuf;
     }
@@ -259,6 +299,30 @@ private:
     odom_lock.lock();
     imu_lock.lock();
     land_detection_lock.lock();
+
+    double current_force = force0_buffer.front().force.z + force1_buffer.front().force.z + force2_buffer.front().force.z + force3_buffer.front().force.z - UAVmodel::mass * 9.81;
+    if (current_force <= 0.0 && !UAV_flying)
+    {
+      force0_buffer.clear();
+      force1_buffer.clear();
+      force2_buffer.clear();
+      force3_buffer.clear();
+      odom_msg_buffer.clear();
+      imu_msg_buffer.clear();
+      force0_lock.unlock();
+      force1_lock.unlock();
+      force2_lock.unlock();
+      force3_lock.unlock();
+      odom_lock.unlock();
+      imu_lock.unlock();
+      land_detection_lock.unlock();
+      RCLCPP_DEBUG(node_logger, "Not yet flying!");
+      return 1;
+    }
+    else
+    {
+      UAV_flying = true;    // Now the UAV is actually flying!
+    }
     
     if (force_msg_count == 0)
     {
@@ -284,9 +348,9 @@ private:
     int64_t current_input_time = 0.25 * (force0_time + force1_time + force2_time + force3_time - offset_force0_time - offset_force1_time - offset_force2_time - offset_force3_time);
     input_dt = (current_input_time - old_input_time) * 1.0e-9;
     old_input_time = current_input_time;
-    RCLCPP_DEBUG_STREAM(node_logger, "Force mean time: " << current_input_time / 1e6 << " ms, dt = " << input_dt << " s.");
+    // RCLCPP_DEBUG_STREAM(node_logger, "Force mean time: " << current_input_time / 1e6 << " ms, dt = " << input_dt << " s.");
 
-    // Remove bias and negative values from forces
+    // Compensate motor weight and remove negative values from forces
     force0_buffer.front().force.z += 0.15755;
     force1_buffer.front().force.z += 0.15755;
     force2_buffer.front().force.z += 0.15755;
@@ -328,7 +392,7 @@ private:
       odom_lock.unlock();
       imu_lock.unlock();
       land_detection_lock.unlock();
-      RCLCPP_DEBUG_STREAM(node_logger, "Processing only forces\n-------------------------------------------------------------------------------------------------------");
+      // RCLCPP_DEBUG_STREAM(node_logger, "Processing only forces\n-------------------------------------------------------------------------------------------------------");
       return 0;
     }
 
@@ -336,7 +400,7 @@ private:
     current_imu_time = rclcpp::Time(imu_msg_buffer.front().header.stamp).nanoseconds();
     imu_dt = (current_imu_time - old_imu_time) * 1.0e-9;
     old_imu_time = current_imu_time;
-    RCLCPP_DEBUG_STREAM(node_logger, "IMU delta t: " << imu_dt << " s.");
+    // RCLCPP_DEBUG_STREAM(node_logger, "IMU delta t: " << imu_dt << " s.");
     measurement.imu_acc = Vector3d( imu_msg_buffer.front().linear_acceleration.x,
                                     imu_msg_buffer.front().linear_acceleration.y,
                                     imu_msg_buffer.front().linear_acceleration.z);
@@ -351,7 +415,7 @@ private:
     current_odom_time = 1e3 * odom_msg_buffer.front().timestamp;
     odom_dt = (current_odom_time - old_odom_time) * 1.0e-9;
     old_odom_time = current_odom_time;
-    RCLCPP_DEBUG_STREAM(node_logger, "Odom delta t: " << odom_dt << " s.");
+    // RCLCPP_DEBUG_STREAM(node_logger, "Odom delta t: " << odom_dt << " s.");
     // Position and linear velocity are rotated into NWU RF
     // Position and linear velocity covariances are rotated into NWU RF
     Matrix3f px4_position_covariance = Map<const Vector3f>(odom_msg_buffer.front().position_variance.data(), 3).asDiagonal();
@@ -428,7 +492,7 @@ private:
     imu_lock.unlock();
     land_detection_lock.unlock();
     measurements_updated = true;
-    RCLCPP_DEBUG_STREAM(node_logger, "Processing both forces & measures\n-------------------------------------------------------------------------------------------------------");
+    // RCLCPP_DEBUG_STREAM(node_logger, "Processing both forces & measures\n-------------------------------------------------------------------------------------------------------");
     return 0;
   }
 
@@ -439,7 +503,7 @@ private:
     // Synchronize incoming messages
     if (sync_msgs())
     {
-      RCLCPP_DEBUG(node_logger, "Buffers empty, stepping ekf!");
+      // RCLCPP_DEBUG(node_logger, "Buffers empty, stepping ekf!");
       return;
     }
     // Predict and update
@@ -448,7 +512,7 @@ private:
     ikfom.predict(input_dt, Q, current_input);
     current_state = ikfom.get_x();
     VectorXd state_vector;
-    RCLCPP_DEBUG_STREAM(node_logger, "Predicted state: \n" << current_state);
+    // RCLCPP_DEBUG_STREAM(node_logger, "Predicted state: \n" << current_state);
     if (measurements_updated)
     {
       // Update propagated state with measurements
@@ -459,7 +523,7 @@ private:
       auto time_post_update = this->now();
       double elapsed_one_step = (time_post_update.nanoseconds() - time_begin) * 1.0e-6; // In milliseconds
       current_state = ikfom.get_x();
-      RCLCPP_DEBUG_STREAM(node_logger, "Updated state: " << current_state << " total elapsed: " << elapsed_one_step << "ms.");
+      // RCLCPP_DEBUG_STREAM(node_logger, "Updated state: " << current_state << " total elapsed: " << elapsed_one_step << "ms.");
 
       // Publish odometry
       nav_msgs::msg::Odometry odometry_out;
@@ -510,12 +574,18 @@ private:
                   << current_state.vel.format(CommaInitFormat)
                   << current_state.bg.format(CommaInitFormat)
                   << current_state.ba.format(CommaInitFormat)
+                  << current_state.btau.format(CommaInitFormat)
                   << current_state.grav.get_vect().format(CommaInitFormat)
                   << current_state.rot_gps_imu.coeffs().format(CommaInitFormat)
                   << current_state.pos_gps_imu.format(CommaInitFormat)
                   << current_state.omega.format(CommaInitFormat)
                   << current_input.force.format(CommaInitFormat)
-                  << current_input.torque.format(IOFormat(StreamPrecision, DontAlignCols, ", ", ", ", "", "", "", ""))
+                  << current_input.torque.format(CommaInitFormat)
+                  << measurement.px4_position.format(CommaInitFormat)
+                  << measurement.px4_velocity.format(CommaInitFormat)
+                  << measurement.px4_orientation.coeffs().format(CommaInitFormat)
+                  << measurement.imu_acc.format(CommaInitFormat)
+                  << measurement.imu_gyr.format(IOFormat(StreamPrecision, DontAlignCols, ", ", ", ", "", "", "", ""))
                   << std::endl;
         log_file.flush();
         // log_file << std::unitbuf;
@@ -523,7 +593,7 @@ private:
     }
     else
     {
-      RCLCPP_DEBUG_STREAM(node_logger, "Only prediction this loop\n======================================================================");
+      // RCLCPP_DEBUG_STREAM(node_logger, "Only prediction this loop\n======================================================================");
       return;
     }
     
@@ -561,18 +631,20 @@ private:
     init_state.grav = S2(mean_acc); // S2(- mean_acc / mean_acc.norm() * 9.81);
     
     init_state.bg  = mean_gyr;
+    // init_state.btau = Vector3d(0.0, 0.445, 0.0);  // Counterbalancing the Lidar weight
     ikfom.change_x(init_state);
 
     esekfom::esekf<state_ikfom, UAVmodel::PROCESS_NOISE_SIZE, input_ikfom>::cov init_P = ikfom.get_P();
     init_P.setIdentity();
-    init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;
-    init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001;
-    init_P(15,15) = init_P(16,16) = init_P(17,17) = 0.0001;
-    init_P(18,18) = init_P(19,19) = init_P(20,20) = 0.001;
-    init_P(21,21) = init_P(22,22) = 0.00001; 
-    init_P(23,23) = 0.00001; 
-    init_P(24,24) = init_P(25,25) = init_P(26,26) = 0.00001; 
-    init_P(27,27) = init_P(28,28) = init_P(29,29) = 0.00001; 
+    init_P(6,6) = init_P(7,7) = init_P(8,8) = 0.00001;          // rot_I_L
+    init_P(9,9) = init_P(10,10) = init_P(11,11) = 0.00001;      // pos_I_L
+    init_P(15,15) = init_P(16,16) = init_P(17,17) = 0.0001;     // bg
+    init_P(18,18) = init_P(19,19) = init_P(20,20) = 0.001;      // ba
+    init_P(21,21) = init_P(22,22) = 0.00001;                    // g_x, g_y
+    init_P(23,23) = 0.00001;                                    // g_z
+    init_P(24,24) = init_P(25,25) = init_P(26,26) = 0.00001;    // rot_gps_imu
+    init_P(27,27) = init_P(28,28) = init_P(29,29) = 0.00001;    // pos_gps_imu
+    init_P(18,18) = init_P(19,19) = init_P(20,20) = 0.001;      // btau
     ikfom.change_P(init_P);
     imu_lock.unlock();
     RCLCPP_DEBUG_STREAM(node_logger, "IMU initialized with " << N << " values!\nmean_acc: " << mean_acc.transpose() << " mean_gyr: " << mean_gyr.transpose()
@@ -595,6 +667,7 @@ private:
   std::mutex odom_lock, imu_lock, force0_lock, force1_lock, force2_lock, force3_lock, land_detection_lock;
 
   double EKF_frequency;
+  int max_iterations = 3;
   double acc_noise_cov, gyr_noise_cov, aero_noise_cov;
   state_ikfom current_state;
   esekfom::esekf<state_ikfom, UAVmodel::PROCESS_NOISE_SIZE, input_ikfom> ikfom;

@@ -6,8 +6,9 @@
         log_filepath: "./"
 
         ekf:
-          frequency: 50.0
+          frequency: 100.0
+          max_iterations: 5
           acc_noise_covariance: 0.00001
           gyr_noise_covariance: 0.00001
-          aero_noise_covariance: 0.000001
+          aero_noise_covariance: 0.0000001
           extrinsic_estim_enable: false

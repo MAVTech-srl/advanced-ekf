@@ -31,6 +31,7 @@ Then open VS Code and open the project in the container. The correct `Dockerfile
 The advanced-ekf ROS2 package comes with two data visualization tools:
 - Plotjuggler (self-contained in Docker) to visualize both `.csv` files and ROS2 messages in real time
 - `plot_csv.py` to visualize the `.csv` file created by the advanced-ekf node when `save_log` parameter in `src/advanced-ekf/config/default.yaml` file is set to `true`. This script runs a Dash-Plotly webapp at `localhost:8050` in which it is possible to open the log files in the `logs/` folder.
+Before using `plot_csv.py`, create a `venv` and install the pip packages listed in `requirements.txt`.
 
 # Contact
 - [Davide](https://github.com/DavideCarminati)
